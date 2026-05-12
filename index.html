@@ -131,6 +131,20 @@
     line-height: 1.5;
     max-width: 520px;
   }
+  .softlaunch-projection {
+    margin-top: 6px;
+    font-size: 13px;
+    color: #2D2D2D;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .softlaunch-projection .proj-label { color: #666; }
+  .softlaunch-projection .proj-date {
+    color: #EF4444;
+    font-weight: 500;
+  }
+  .softlaunch-projection.warn .proj-date { color: #F97316; }
   /* QA buffer strip */
   .qa-buffer-strip {
     max-width: 1400px;
@@ -538,7 +552,13 @@
          onblur="updateHeroTitle(this.innerText)">Soft Launch (R3)</div>
     <div class="softlaunch-row">
       <div class="softlaunch-date mono" id="softlaunch-date">—</div>
+      <label class="date-edit-btn" title="Change committed soft launch date">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+        <input type="date" class="hidden-date" id="softlaunch-committed-input"
+               onchange="updateCommittedSoftlaunch(this.value)" />
+      </label>
     </div>
+    <div class="softlaunch-projection" id="softlaunch-projection" style="display:none;"></div>
   </div>
   <div class="hero-right">
     <div class="hero-pill" id="hero-pill">—</div>
@@ -564,6 +584,7 @@
   "lastEdited": null,
   "heroTitle": "Soft Launch",
   "qaBufferDays": 14,
+  "committedSoftlaunch": "2026-07-15",
   "releases": [
     {
       "id": "R1",
@@ -795,7 +816,9 @@
     const r3 = state.releases.find(r => r.id === 'R3');
     const codeFreeze = parseDate(r3.target);
     const buffer = state.qaBufferDays ?? 14;
-    const softlaunch = addDays(codeFreeze, buffer);
+    const projection = addDays(codeFreeze, buffer);
+    const committed = parseDate(state.committedSoftlaunch || '2026-07-15');
+    const slippage = daysBetween(committed, projection);
 
     // Hero title (only update if not currently focused, to not steal user edit)
     const titleEl = document.getElementById('hero-title');
@@ -803,14 +826,34 @@
       titleEl.innerText = state.heroTitle || 'Soft Launch';
     }
 
-    document.getElementById('softlaunch-date').textContent = fmt(softlaunch);
+    // Big date = committed soft launch (the promise)
+    document.getElementById('softlaunch-date').textContent = fmt(committed);
+    const committedInput = document.getElementById('softlaunch-committed-input');
+    if (committedInput && document.activeElement !== committedInput) {
+      committedInput.value = state.committedSoftlaunch || '2026-07-15';
+    }
     const bufInput = document.getElementById('qa-buffer-input');
     if (bufInput && document.activeElement !== bufInput) bufInput.value = buffer;
 
-    const traj = trajectory(softlaunch, r3.target);
+    // Slippage line (only when we're behind)
+    const projEl = document.getElementById('softlaunch-projection');
+    if (slippage > 0) {
+      projEl.style.display = 'flex';
+      projEl.classList.toggle('warn', slippage <= 7);
+      projEl.innerHTML = `<span class="proj-label">Currently projected:</span> <span class="proj-date mono">${fmt(projection)}</span>`;
+    } else {
+      projEl.style.display = 'none';
+    }
+
+    // Pill — slippage-aware
+    let color, text;
+    if (slippage === 0) { color = 'green'; text = 'On Track'; }
+    else if (slippage < 0) { color = 'green'; text = `${-slippage} ${-slippage === 1 ? 'day' : 'days'} ahead`; }
+    else if (slippage <= 7) { color = 'orange'; text = `${slippage} ${slippage === 1 ? 'day' : 'days'} late`; }
+    else { color = 'red'; text = `${slippage} days late`; }
     const pill = document.getElementById('hero-pill');
-    pill.className = `hero-pill ${traj.color}`;
-    pill.innerHTML = `${trajIcon(traj.color)} ${SIMPLE_LABEL[traj.color]}`;
+    pill.className = `hero-pill ${color}`;
+    pill.innerHTML = `${trajIcon(color)} ${text}`;
   }
 
   const SIMPLE_LABEL = { green: 'On Track', orange: 'At Risk', red: 'Late' };
@@ -1004,6 +1047,15 @@
     const n = parseInt(value, 10);
     if (Number.isNaN(n) || n < 0) return;
     state.qaBufferDays = n;
+    persist();
+    renderHero();
+    updateLastUpdated();
+  }
+
+  function updateCommittedSoftlaunch(value) {
+    if (!value) return;
+    flushNotes();
+    state.committedSoftlaunch = value;
     persist();
     renderHero();
     updateLastUpdated();
